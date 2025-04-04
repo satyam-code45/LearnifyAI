@@ -1,5 +1,5 @@
 import axios from "axios";
-import { NextResponse } from "next/server";
+
 
 export const getApiKey = async () => {
   const result = await axios.get("/api/authenticate");
@@ -12,13 +12,13 @@ interface CoachingRequest {
   coachingOption: string;
   message: string;
 }
+
 export async function fetchCoachingResponse({
   topic,
   coachingOption,
   message,
-}: CoachingRequest): Promise<NextResponse> {
+}: CoachingRequest): Promise<{ content?: string; error?: string }> {
   try {
-    
     const res = await fetch("/api/openai", {
       method: "POST",
       headers: {
@@ -31,17 +31,16 @@ export async function fetchCoachingResponse({
       }),
     });
 
+    // ❗ Make sure to call .json() only once here
+    const data = await res.json();
+
     if (!res.ok) {
-      throw new Error(`API returned status ${res.status}`);
+      return { error: data?.error || "Something went wrong with the request." };
     }
 
-    const data = await res.json();
-    return NextResponse.json(data); // Ensure it's a valid NextResponse
+    return { content: data.content }; // 👈 match your API's shape
   } catch (error) {
-    console.error("Error fetching coaching response:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch coaching response" },
-      { status: 500 }
-    ); // Return a NextResponse with an error message
+    console.error("Error in fetchCoachingResponse:", error);
+    return { error: "Failed to fetch coaching response" };
   }
 }

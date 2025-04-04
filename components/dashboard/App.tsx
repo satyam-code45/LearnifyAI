@@ -7,13 +7,11 @@ import {
   LiveTranscriptionEvents,
   useDeepgram,
 } from "@/app/context/DeepgramContextProvider";
-
 import {
   MicrophoneEvents,
   MicrophoneState,
   useMicrophone,
 } from "@/app/context/MicrophoneContextProvider";
-
 import { fetchCoachingResponse } from "@/utils/GlobalServices";
 
 function App({
@@ -27,7 +25,12 @@ function App({
   const [finalTranscript, setFinalTranscript] = useState<string>("");
   const [showFinalTranscript, setShowFinalTranscript] =
     useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Prevents multiple API calls
+  const [finalConversation, setFinalConversation] = useState<string>("");
+
+  const bufferedTranscriptRef = useRef<string>("");
+  const captionTimeout = useRef<NodeJS.Timeout | null>(null);
+  const bufferInterval = useRef<NodeJS.Timeout | null>(null);
+  const keepAliveInterval = useRef<NodeJS.Timeout | null>(null);
 
   const {
     connection,
@@ -35,7 +38,6 @@ function App({
     connectionState,
     disconnectFromDeepgram,
   } = useDeepgram();
-
   const {
     setupMicrophone,
     microphone,
@@ -44,20 +46,19 @@ function App({
     stopMicrophone,
   } = useMicrophone();
 
-  const captionTimeout = useRef<NodeJS.Timeout | undefined>(undefined);
-  const keepAliveInterval = useRef<NodeJS.Timeout | undefined>(undefined);
-
   async function handleConnect() {
     await setupMicrophone();
   }
 
   async function handleDisconnect() {
-    console.log("Disconnecting...");
+    console.log("🚫 Disconnecting...");
     setCaption("");
     await disconnectFromDeepgram();
     await stopMicrophone();
     setShowFinalTranscript(true);
-    console.log("Final Transcript:", finalTranscript);
+    console.log("📌 Final Transcript:", finalTranscript);
+    console.log("📌 Final Conversation:", finalConversation);
+    clearInterval(bufferInterval.current!);
   }
 
   useEffect(() => {
@@ -70,7 +71,6 @@ function App({
         utterance_end_ms: 3000,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [microphoneState]);
 
   useEffect(() => {
@@ -82,40 +82,20 @@ function App({
       }
     };
 
-    const onTranscript = async (data: LiveTranscriptionEvent) => {
-      const { is_final: isFinal, speech_final: speechFinal } = data;
+    const onTranscript = (data: LiveTranscriptionEvent) => {
       const thisCaption = data.channel.alternatives[0]?.transcript.trim() || "";
+      const { is_final: isFinal } = data;
 
       if (thisCaption !== "") {
         setCaption(thisCaption);
-      }
 
-      if (isFinal) {
-        setFinalTranscript((prev) => prev + " " + thisCaption);
-      }
-
-      if (isFinal && speechFinal && !isProcessing) {
-        clearTimeout(captionTimeout.current);
-        setIsProcessing(true); // Prevents multiple requests at once
-
-        try {
-          const aiResponse = await fetchCoachingResponse({
-            topic: topic,
-            coachingOption: CoachingOption,
-            message: thisCaption,
-          });
-          console.log(aiResponse);
-        } catch (error) {
-          console.error("Error fetching AI response:", error);
+        if (isFinal) {
+          setFinalTranscript((prev) => prev + " " + thisCaption);
+          bufferedTranscriptRef.current += " " + thisCaption;
         }
 
-        setTimeout(() => {
-          setIsProcessing(false); // Allows the next request after 1 second
-        }, 1000);
-
-        captionTimeout.current = setTimeout(() => {
-          setCaption(undefined);
-        }, 3000);
+        if (captionTimeout.current) clearTimeout(captionTimeout.current);
+        captionTimeout.current = setTimeout(() => setCaption(undefined), 3000);
       }
     };
 
@@ -123,6 +103,44 @@ function App({
       connection.addListener(LiveTranscriptionEvents.Transcript, onTranscript);
       microphone.addEventListener(MicrophoneEvents.DataAvailable, onData);
       startMicrophone();
+
+      // ⏳ Flush buffer every 10s
+      bufferInterval.current = setInterval(async () => {
+        const bufferedMessage = bufferedTranscriptRef.current.trim();
+        if (!bufferedMessage) return;
+
+        console.log("📤 Sending to Gemini:", bufferedMessage);
+
+        try {
+          const aiResponse = await fetchCoachingResponse({
+            topic,
+            coachingOption: CoachingOption,
+            message: bufferedMessage,
+          });
+
+          if (aiResponse.error) {
+            console.error("❌ Gemini API error:", aiResponse.error);
+            if (aiResponse.error.includes("Rate limit exceeded")) {
+              setFinalConversation(
+                (prev) => prev + " ⚠️ Rate limit exceeded. Please wait."
+              );
+            } else {
+              setFinalConversation((prev) => prev + " " + aiResponse.error);
+            }
+          } else if (aiResponse.content) {
+            console.log("✅ Gemini Response:", aiResponse.content);
+            setFinalConversation((prev) => prev + " " + aiResponse.content);
+          }
+        } catch (err) {
+          console.error("❌ Gemini API error:", err);
+          setFinalConversation(
+            (prev) =>
+              prev + " " + (err instanceof Error ? err.message : String(err))
+          );
+        }
+
+        bufferedTranscriptRef.current = ""; // Reset buffer after sending
+      }, 10000);
     }
 
     return () => {
@@ -131,9 +149,9 @@ function App({
         onTranscript
       );
       microphone.removeEventListener(MicrophoneEvents.DataAvailable, onData);
-      clearTimeout(captionTimeout.current);
+      if (captionTimeout.current) clearTimeout(captionTimeout.current);
+      if (bufferInterval.current) clearInterval(bufferInterval.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionState]);
 
   useEffect(() => {
@@ -144,18 +162,16 @@ function App({
       connectionState === SOCKET_STATES.open
     ) {
       connection.keepAlive();
-
       keepAliveInterval.current = setInterval(() => {
         connection.keepAlive();
       }, 10000);
     } else {
-      clearInterval(keepAliveInterval.current);
+      clearInterval(keepAliveInterval.current!);
     }
 
     return () => {
-      clearInterval(keepAliveInterval.current);
+      clearInterval(keepAliveInterval.current!);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [microphoneState, connectionState]);
 
   return (

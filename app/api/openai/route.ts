@@ -9,10 +9,14 @@ const openai = new OpenAI({
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const { topic, coachingOption, message } = await request.json();
+    const { topic, coachingOption, message }: {
+      topic: string;
+      coachingOption: string;
+      message: string;
+    } = await request.json();
+
     console.log("Received request:", { topic, coachingOption, message });
 
-    // Find matching coaching option
     const option = CoachingOptions.find((item) => item.name === coachingOption);
     if (!option) {
       return NextResponse.json(
@@ -20,10 +24,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 400 }
       );
     }
-    // Format the prompt
+
     const prompt = option.prompt.replace("{user_topic}", topic);
 
-    // Call OpenAI API
     const completion = await openai.chat.completions.create({
       model: "google/gemini-2.5-pro-exp-03-25:free",
       messages: [
@@ -32,7 +35,30 @@ export async function POST(request: Request): Promise<NextResponse> {
       ],
     });
 
-    // Validate API response
+    console.log("Gemini Response:", completion);
+
+    // Check for Gemini rate limit error
+    if ("error" in completion) {
+      const errorMessage = completion.error.message ?? "Unknown Gemini error";
+      const isRateLimit = errorMessage.includes("limit_rpd") || errorMessage.includes("Rate limit");
+
+      if (isRateLimit) {
+        console.warn("Rate limit hit:", errorMessage);
+        return NextResponse.json(
+          {
+            error: "Rate limit exceeded",
+            message: "You've passed your daily limit for Gemini. Please come back tomorrow.",
+          },
+          { status: 429 }
+        );
+      }
+
+      return NextResponse.json(
+        { error: "Gemini error", message: errorMessage },
+        { status: 500 }
+      );
+    }
+
     if (!completion.choices?.length) {
       throw new Error("No choices returned from the API.");
     }
@@ -41,15 +67,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.log("AI Response:", responseContent);
 
     return NextResponse.json({ response: responseContent });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error fetching response from Gemini:", error);
 
-    const errorMessage = error.message || "An unexpected error occurred.";
-    const statusCode = errorMessage.includes("RESOURCE_EXHAUSTED") ? 429 : 500;
+    let errorMessage = "Unexpected error occurred";
+    if (error instanceof Error) errorMessage = error.message;
 
     return NextResponse.json(
-      { error: "Failed to fetch Gemini response", details: errorMessage },
-      { status: statusCode }
+      {
+        error: "Failed to fetch Gemini response",
+        message: errorMessage,
+      },
+      { status: 500 }
     );
   }
 }
