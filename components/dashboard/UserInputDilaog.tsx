@@ -11,12 +11,13 @@ import { Textarea } from "../ui/textarea";
 import { CoachingExperts } from "@/utils/Options";
 import { BlurFade } from "../magicui/blur-fade";
 import Image from "next/image";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Button } from "../ui/button";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { UserContext } from "@/app/context/UserContext";
 
 function UserInputDialog({
   children,
@@ -32,6 +33,7 @@ function UserInputDialog({
   const createDiscussionRoom = useMutation(api.DiscussionRoom.CreateNewRoom);
   const [loading, setLoading] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
+  const { userData } = useContext(UserContext)!;
 
   const onCLickNext = async () => {
     setLoading(true);
@@ -39,6 +41,7 @@ function UserInputDialog({
       coachingOptions: CoachingOption,
       expertName: selectedExpert,
       topic: topic,
+      uid: userData!._id,
     });
     console.log("onclickNext", result);
     setOpenDialog(false);
@@ -100,7 +103,7 @@ function UserInputDialog({
                     onClick={onCLickNext}
                   >
                     {loading ? (
-                      <div>
+                      <div className="flex gap-2">
                         <Loader2 className="animate-spin" />
                         <span>Submitting...</span>
                       </div>

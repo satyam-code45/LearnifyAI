@@ -1,17 +1,16 @@
-// _context/UserContext.tsx
+"use client";
+import { Id } from "@/convex/_generated/dataModel";
 import { createContext, Dispatch, SetStateAction } from "react";
 
-// Define your user type; adjust the properties as needed.
-export type UserData =
-  | {
-      _id: string; // Replace with Id<"users"> if available
-      _creationTime: number;
-      subscription?: string;
-      name: string;
-      email: string;
-      credits: number;
-    }
-  | string; // Assuming Id<"users"> is a string; update if necessary
+// Define your user type;
+export type UserData = {
+  _id: Id<"users">;
+  _creationTime: number;
+  subscription?: string;
+  name: string;
+  email: string;
+  credits: number;
+};
 
 // Define the context type
 interface IUserContext {

@@ -6,6 +6,7 @@ import { Card, CardContent, CardFooter } from "../ui/card";
 import Image from "next/image";
 import { BlurFade } from "../magicui/blur-fade";
 import UserInputDilaog from "./UserInputDilaog";
+import ProfileDialog from "./ProfileDialog";
 
 const FeatureAssistants = () => {
   const user = useUser();
@@ -24,7 +25,9 @@ const FeatureAssistants = () => {
           </span>
         </div>
         <div>
-          <Button className="font-bold w-full">Profile</Button>
+          <ProfileDialog>
+            <Button className="font-bold w-full">Profile</Button>
+          </ProfileDialog>
         </div>
       </div>
       <div className="grid md:grid-cols-3 lg:grid-cols-5 justify-center items-center gap-6 mt-8 p-6">
