@@ -3,80 +3,87 @@ import { CoachingOptions } from "@/utils/Options";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY!,
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const { topic, coachingOption, message }: {
+    const body = await request.json();
+
+    const {
+      topic,
+      coachingOption,
+      message,
+    }: {
       topic: string;
       coachingOption: string;
       message: string;
-    } = await request.json();
+    } = body;
 
-    console.log("Received request:", { topic, coachingOption, message });
-
-    const option = CoachingOptions.find((item) => item.name === coachingOption);
-    if (!option) {
+    if (!topic || !coachingOption || !message) {
       return NextResponse.json(
-        { error: `No matching coaching option found for ${coachingOption}` },
+        { error: "Missing required fields" },
         { status: 400 }
       );
     }
 
-    const prompt = option.prompt.replace("{user_topic}", topic);
+    const option = CoachingOptions.find(
+      (item) => item.name === coachingOption
+    );
 
-    const completion = await openai.chat.completions.create({
-      model: "google/gemini-2.5-pro-exp-03-25:free",
-      messages: [
-        { role: "assistant", content: prompt },
-        { role: "user", content: message },
-      ],
-    });
-
-    console.log("Gemini Response:", completion);
-
-    // Check for Gemini rate limit error
-    if ("error" in completion) {
-      const errorMessage = completion.error.message ?? "Unknown Gemini error";
-      const isRateLimit = errorMessage.includes("limit_rpd") || errorMessage.includes("Rate limit");
-
-      if (isRateLimit) {
-        console.warn("Rate limit hit:", errorMessage);
-        return NextResponse.json(
-          {
-            error: "Rate limit exceeded",
-            message: "You've passed your daily limit for Gemini. Please come back tomorrow.",
-          },
-          { status: 429 }
-        );
-      }
-
+    if (!option) {
       return NextResponse.json(
-        { error: "Gemini error", message: errorMessage },
-        { status: 500 }
+        { error: `Invalid coaching option: ${coachingOption}` },
+        { status: 400 }
       );
     }
 
-    if (!completion.choices?.length) {
-      throw new Error("No choices returned from the API.");
+    const systemPrompt = option.prompt.replace("{user_topic}", topic);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini", // cheaper & stable
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message },
+      ],
+      temperature: 0.7,
+    });
+
+    const response =
+      completion.choices?.[0]?.message?.content ?? "No response generated";
+
+    return NextResponse.json({ response });
+  } catch (error: any) {
+    console.error("OpenAI API error:", error);
+
+    // 🔴 RATE LIMIT / QUOTA
+    if (error?.status === 429) {
+      return NextResponse.json(
+        {
+          error: "Quota exceeded",
+          message:
+            "You have exceeded your OpenAI quota or rate limits. Please check billing or try again later.",
+        },
+        { status: 429 }
+      );
     }
 
-    const responseContent = completion.choices[0].message?.content;
-    console.log("AI Response:", responseContent);
+    // 🔴 AUTH ERROR
+    if (error?.status === 401) {
+      return NextResponse.json(
+        {
+          error: "Invalid API key",
+          message: "Your OpenAI API key is invalid or missing.",
+        },
+        { status: 401 }
+      );
+    }
 
-    return NextResponse.json({ response: responseContent });
-  } catch (error: unknown) {
-    console.error("Error fetching response from Gemini:", error);
-
-    let errorMessage = "Unexpected error occurred";
-    if (error instanceof Error) errorMessage = error.message;
-
+    // 🔴 GENERIC ERROR
     return NextResponse.json(
       {
-        error: "Failed to fetch Gemini response",
-        message: errorMessage,
+        error: "OpenAI request failed",
+        message: error?.message || "Unexpected server error",
       },
       { status: 500 }
     );
